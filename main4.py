@@ -573,8 +573,6 @@ def update_gdd_and_harvest_estimate():
             log_error('Sistema', error_msg)
 
 import threading
-import time
-from datetime import datetime
 
 # Global control flags
 running = True
