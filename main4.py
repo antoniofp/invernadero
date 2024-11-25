@@ -472,6 +472,106 @@ def check_environmental_conditions():
         print(error_msg)
         log_error('Sistema', error_msg)
 
+def calculate_24h_average_temp():
+    """Calculate average temperature from last 24 hours"""
+    with db_lock:
+        try:
+            if not db_connection.is_connected():
+                db_connection.reconnect()
+                
+            cursor = db_connection.cursor(dictionary=True)
+            
+            # Get temperatures from last 24 hours
+            query = """
+                SELECT valor
+                FROM sensor_temperatura
+                WHERE id_zona = 1 
+                AND fecha_hora >= NOW() - INTERVAL 24 HOUR
+            """
+            cursor.execute(query)
+            temperatures = cursor.fetchall()
+            cursor.close()
+            
+            if temperatures:
+                # Calculate average temperature
+                avg_temp = sum(record['valor'] for record in temperatures) / len(temperatures)
+                return avg_temp
+            return None
+            
+        except Exception as e:
+            error_msg = f"Error calculating 24h average temperature: {e}"
+            print(error_msg)
+            log_error('Sistema', error_msg)
+            return None
+
+
+#aquí se calcula el gdd diario, se actualiza el gdd acumulado y se estima el tiempo hasta la cosecha
+#aquí se define la temperatura base en 10°C
+def update_gdd_and_harvest_estimate():
+    """
+    Calculate daily GDD, update cumulative GDD and estimate days until harvest.
+    Base temperature is 10°C.
+    """
+    with db_lock:
+        try:
+            if not db_connection.is_connected():
+                db_connection.reconnect()
+                
+            cursor = db_connection.cursor(dictionary=True)
+            
+            # First get current GDD and GDD needed for harvest
+            query = """
+                SELECT gdd, gdd_for_harvest
+                FROM zona
+                WHERE id_zona = 1
+            """
+            cursor.execute(query)
+            result = cursor.fetchone()
+            
+            if not result:
+                cursor.close()
+                return
+                
+            current_gdd = result['gdd'] if result['gdd'] else 0
+            gdd_for_harvest = result['gdd_for_harvest']
+            
+            # Calculate today's GDD
+            avg_temp = calculate_24h_average_temp()
+            if avg_temp is None:
+                cursor.close()
+                return
+                
+            # Calculate GDD for today (simple method)
+            daily_gdd = max(0, avg_temp - 10)  # Base temp is 10°C
+            
+            # Add to cumulative GDD
+            new_total_gdd = current_gdd + daily_gdd
+            
+            # Calculate estimated days until harvest
+            if daily_gdd > 0:
+                remaining_gdd = gdd_for_harvest - new_total_gdd
+                est_days = remaining_gdd / daily_gdd if remaining_gdd > 0 else 0
+            else:
+                est_days = None
+                
+            # Update the database
+            update_query = """
+                UPDATE zona
+                SET gdd = %s,
+                    est_days_harvest = %s
+                WHERE id_zona = 1
+            """
+            cursor.execute(update_query, (new_total_gdd, est_days))
+            db_connection.commit()
+            cursor.close()
+            
+            print(f"Updated GDD: {new_total_gdd:.2f}, Estimated days until harvest: {est_days:.1f if est_days else 'N/A'}")
+            
+        except Exception as e:
+            error_msg = f"Error updating GDD and harvest estimate: {e}"
+            print(error_msg)
+            log_error('Sistema', error_msg)
+
 import threading
 import time
 from datetime import datetime
@@ -508,10 +608,12 @@ def database_update_thread():
 
     last_upload_time = time.time()
     last_params_update = time.time()
+    last_gdd_update = None  # Track last GDD update
     
     while running:
         try:
             current_time = time.time()
+            current_datetime = datetime.now()
             
             # Update environmental parameters every 5 minutes
             if current_time - last_params_update >= 300:
@@ -524,6 +626,15 @@ def database_update_thread():
                     sensor_data = current_values.copy()
                 log_sensor_data(sensor_data)
                 last_upload_time = current_time
+            
+            # Update GDD at noon each day
+            current_hour = current_datetime.hour
+            current_date = current_datetime.date()
+            
+            if (current_hour == 12 and 
+                (last_gdd_update is None or last_gdd_update != current_date)):
+                update_gdd_and_harvest_estimate()
+                last_gdd_update = current_date
                     
             # Get actuator states from database
             get_actuator_states()
