@@ -6,74 +6,63 @@ from flask import Flask, jsonify, send_file
 import os
 from datetime import datetime
 import shutil
+from threading import Thread
+from ultralytics import YOLO
 
-# Directory Configuration
+# Directorios de configuración
 BASE_DIR = "camera_images"
 CAPTURE_DIR = os.path.join(BASE_DIR, "captures")
 PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 
-# Ensure directories exist
-for dir_path in [CAPTURE_DIR, PROCESSED_DIR]:
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
+# Asegurar que los directorios existan
+os.makedirs(CAPTURE_DIR, exist_ok=True)
+os.makedirs(PROCESSED_DIR, exist_ok=True)
 
-# Initialize camera with autofocus
+# Inicializar la cámara con enfoque automático
 picam2 = Picamera2()
 camera_config = picam2.create_still_configuration(main={"size": (1280, 720)})
 picam2.configure(camera_config)
-
-# Enable continuous autofocus
 picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
 picam2.start()
-time.sleep(2)  # Warm-up time
+time.sleep(2)  # Calentamiento de la cámara
 
-# Load YOLO model
-from ultralytics import YOLO
+# Cargar modelo YOLO
 MODEL_PATH = "best_model.pt"
 model = YOLO(MODEL_PATH)
 
-# Flask app
+# Crear la app Flask
 app = Flask(__name__)
 
+# Funciones de manejo de imágenes
 def keep_only_latest_file(directory):
-    """Keep only the most recent file in the specified directory."""
-    files = [os.path.join(directory, f) for f in os.listdir(directory) 
-             if os.path.isfile(os.path.join(directory, f))]
+    files = [os.path.join(directory, f) for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
     if files:
-        # Sort files by modification time
         files.sort(key=os.path.getmtime)
-        # Remove all but the latest file
         for f in files[:-1]:
             os.remove(f)
 
 def capture_and_process():
-    """Capture and process a new image, keeping only the latest files."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Capture image
     capture_path = os.path.join(CAPTURE_DIR, f"capture_{timestamp}.jpg")
     picam2.capture_file(capture_path)
-    
-    # Process with YOLO
-    processed_path = os.path.join(PROCESSED_DIR, f"processed_{timestamp}.jpg")
+
+    # Procesar imagen con el modelo YOLO
     results = model(capture_path, save=True)
-    
-    # Move the YOLO output to our processed directory
-    yolo_output = os.path.join("runs", "detect", "predict", f"capture_{timestamp}.jpg")
+    yolo_output = results.save_dir / f"capture_{timestamp}.jpg"
+    processed_path = os.path.join(PROCESSED_DIR, f"processed_{timestamp}.jpg")
+
     if os.path.exists(yolo_output):
         shutil.move(yolo_output, processed_path)
-        # Clean up YOLO's runs directory
         shutil.rmtree("runs/detect", ignore_errors=True)
-    
-    # Keep only latest files
+
     keep_only_latest_file(CAPTURE_DIR)
     keep_only_latest_file(PROCESSED_DIR)
-    
+
     return capture_path, processed_path
 
+# Rutas de Flask
 @app.route('/latest-capture', methods=['GET'])
 def get_latest_capture():
-    """Endpoint to get the latest captured image."""
     try:
         files = os.listdir(CAPTURE_DIR)
         if not files:
@@ -85,7 +74,6 @@ def get_latest_capture():
 
 @app.route('/latest-processed', methods=['GET'])
 def get_latest_processed():
-    """Endpoint to get the latest processed image with predictions."""
     try:
         files = os.listdir(PROCESSED_DIR)
         if not files:
@@ -95,23 +83,22 @@ def get_latest_processed():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Función para ejecutar el servidor Flask y capturar imágenes
 def main():
     print("[INFO] Starting camera service...")
-    
-    # Run Flask in a separate thread
-    from threading import Thread
+
+    # Ejecutar Flask en un hilo separado
     flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=5000))
     flask_thread.daemon = True
     flask_thread.start()
-    
-    # Main capture loop
+
+    # Bucle principal de captura y procesamiento
     while True:
         try:
             capture_and_process()
             print("[INFO] Image captured and processed successfully")
         except Exception as e:
             print(f"[ERROR] An error occurred: {e}")
-        
         time.sleep(20)
 
 if __name__ == "__main__":

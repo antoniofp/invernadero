@@ -449,7 +449,7 @@ def update_actuator_state(actuator_name, new_state):
             humidifier_relay.value = new_state
         elif actuator_name == 'riego' and irrigation_servo:
             if new_state:
-                irrigation_servo.mid()  # 90 degrees position
+                irrigation_servo.max()  # 90 degrees position
             else:
                 irrigation_servo.min()  # 0 degrees position
         

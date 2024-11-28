@@ -9,8 +9,7 @@ from threading import Lock
 import busio
 import adafruit_ads1x15.ads1115 as ADS
 from adafruit_ads1x15.analog_in import AnalogIn
-from threading import Thread
-from yolo_sender import capture_and_process_photo
+from yolo_sender import capture_and_process
 
 # Configurable intervals (in seconds)
 SENSOR_READ_INTERVAL = 5
@@ -117,7 +116,7 @@ def setup_hardware():
 
         # Initialize ADS1115 ADC
         i2c = busio.I2C(board.SCL, board.SDA)
-        ads = ADS.ADS1115(i2c)
+        ads = ADS.ADS1115(i2c, address=0x49)
         light_sensor = AnalogIn(ads, ADS.P0)
         
         # Initialize relays (active_high=False for active-low relay modules)
@@ -854,6 +853,8 @@ def main():
 if __name__ == "__main__":
     main()
 
+
+# Para ejecutar el programa, se puede usar el siguiente script de bash:
 """
     
 alias supy='sudo -E env PATH=$PATH python3'
