@@ -6,6 +6,9 @@ import mysql.connector
 import minimalmodbus
 from datetime import datetime
 from threading import Lock
+import busio
+import adafruit_ads1x15.ads1115 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
 
 # Configurable intervals (in seconds)
 SENSOR_READ_INTERVAL = 5
@@ -101,6 +104,7 @@ def setup_database():
     except mysql.connector.Error as e:
         print(f"Error connecting to database: {e}")
         return None
+
 #sets up dht11 sensor and relays, and servo
 def setup_hardware():
     """Initialize GPIO devices (sensors and actuators)"""
@@ -109,8 +113,10 @@ def setup_hardware():
         # Initialize DHT11 sensor
         dht_device = adafruit_dht.DHT11(board.D4)
 
-        # Initialize light sensor (MCP3008 on SPI bus)
-        light_sensor = gpiozero.MCP3008(channel=0)
+        # Initialize ADS1115 ADC
+        i2c = busio.I2C(board.SCL, board.SDA)
+        ads = ADS.ADS1115(i2c)
+        light_sensor = AnalogIn(ads, ADS.P0)
         
         # Initialize relays (active_high=False for active-low relay modules)
         lamp_relay = gpiozero.OutputDevice(27, active_high=False, initial_value=False)
@@ -189,19 +195,19 @@ def read_dht11_sensor():
                 last_valid_values['air_humidity'])
 
 def read_light_sensor():
-    """Read light intensity from MCP3008 ADC with photoresistor."""
+    """Read light intensity from ADS1115 ADC with photoresistor."""
     global current_values, last_valid_values
     
     try:
         if light_sensor is None:
-            raise Exception("Sensor de luz no inicializado")
+            raise Exception("Light sensor not initialized")
             
-        # Read raw value (0 to 1 in gpiozero)
-        raw_value = light_sensor.value
+        # Read voltage value (0V to 5V)
+        voltage = light_sensor.voltage
         
-        # Convert to percentage (inverted since photoresistor resistance increases in darkness)
-        # 0% = darkness, 100% = maximum brightness
-        light_intensity = (1 - raw_value) * 100
+        # Convert to percentage (assuming higher voltage means more light)
+        # Map 0-5V to 0-100%
+        light_intensity = (voltage / 3.3) * 100
         
         # Validate reading is in expected range
         if 0 <= light_intensity <= 100:
@@ -706,9 +712,7 @@ def cleanup_hardware():
         # Add DHT cleanup
         if dht_device:
             dht_device.exit()
-        
-        if light_sensor:
-            light_sensor.close()
+    
             
         # Add soil sensor cleanup
         if soil_sensor:
