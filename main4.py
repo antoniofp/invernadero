@@ -26,7 +26,8 @@ current_values = {
     'air_humidity': None,
     'soil_temperature': None,
     'soil_moisture': None,
-    'soil_ph': None
+    'soil_ph': None,
+    'light_intensity' : None
 }
 
 # Cache for last valid readings
@@ -35,7 +36,8 @@ last_valid_values = {
     'air_humidity': 50.0,
     'soil_temperature': 25.0,
     'soil_moisture': 50.0,
-    'soil_ph': 7.0
+    'soil_ph': 7.0,
+    'light_intensity' : 50.0
 }
 
 # Global actuator states with cache for state tracking
@@ -69,6 +71,7 @@ lamp_relay = None
 fan_relay = None
 humidifier_relay = None
 irrigation_servo = None
+light_sensor = None
 
 
 def setup_soil_sensor():
@@ -101,10 +104,13 @@ def setup_database():
 #sets up dht11 sensor and relays, and servo
 def setup_hardware():
     """Initialize GPIO devices (sensors and actuators)"""
-    global dht_device, lamp_relay, fan_relay, humidifier_relay, irrigation_servo
+    global dht_device, lamp_relay, fan_relay, humidifier_relay, irrigation_servo, light_sensor
     try:
         # Initialize DHT11 sensor
         dht_device = adafruit_dht.DHT11(board.D4)
+
+        # Initialize light sensor (MCP3008 on SPI bus)
+        light_sensor = gpiozero.MCP3008(channel=0)
         
         # Initialize relays (active_high=False for active-low relay modules)
         lamp_relay = gpiozero.OutputDevice(27, active_high=False, initial_value=False)
@@ -182,6 +188,35 @@ def read_dht11_sensor():
         return (last_valid_values['air_temperature'], 
                 last_valid_values['air_humidity'])
 
+def read_light_sensor():
+    """Read light intensity from MCP3008 ADC with photoresistor."""
+    global current_values, last_valid_values
+    
+    try:
+        if light_sensor is None:
+            raise Exception("Sensor de luz no inicializado")
+            
+        # Read raw value (0 to 1 in gpiozero)
+        raw_value = light_sensor.value
+        
+        # Convert to percentage (inverted since photoresistor resistance increases in darkness)
+        # 0% = darkness, 100% = maximum brightness
+        light_intensity = (1 - raw_value) * 100
+        
+        # Validate reading is in expected range
+        if 0 <= light_intensity <= 100:
+            with values_lock:
+                current_values['light_intensity'] = light_intensity
+                last_valid_values['light_intensity'] = light_intensity
+            
+            return light_intensity
+            
+    except Exception as e:
+        error_msg = f"Error reading light sensor: {str(e)}"
+        print(error_msg)
+        log_error('Light_Sensor', error_msg)
+        return last_valid_values['light_intensity']
+    
 def read_soil_sensor():
     """Read all parameters from soil sensor."""
         
@@ -218,21 +253,21 @@ def read_soil_sensor():
                 last_valid_values['soil_ph'])
 
 def read_all_sensors():
-    """
-    Read all sensors and update global values.
-    Returns:
-        dict: Dictionary containing all current sensor values
-    """
+    """Read all sensors and update global values."""
     # Read DHT11
     air_temp, air_hum = read_dht11_sensor()
-    print(f"Air - Temperature: {air_temp:.1f}°C  Humidity: {air_hum:.1f}%")
+    print(f"Air - Temperature: {air_temp:.1f} C  Humidity: {air_hum:.1f}%")
     
     # Read soil sensor
     soil_temp, soil_moisture, soil_ph = read_soil_sensor()
-    print(f"Soil - Temperature: {soil_temp:.1f}°C  Moisture: {soil_moisture:.1f}%  pH: {soil_ph:.2f}")
+    print(f"Soil - Temperature: {soil_temp:.1f} C  Moisture: {soil_moisture:.1f}%  pH: {soil_ph:.2f}")
+    
+    # Read light sensor
+    light_intensity = read_light_sensor()
+    print(f"Light Intensity: {light_intensity:.1f}%")
     
     with values_lock:
-        return current_values.copy()  # Return a copy to prevent external modification
+        return current_values.copy()
 
 def get_actuator_states():
     """
@@ -337,6 +372,10 @@ def log_sensor_data(sensor_data):
             # Soil pH
             """INSERT INTO sensor_ph_suelo 
                (nombre, id_zona, fecha_hora, valor) 
+               VALUES (%s, %s, %s, %s)""",
+            # Light intensity
+            """INSERT INTO sensor_intensidad_luz 
+               (nombre, id_zona, fecha_hora, valor) 
                VALUES (%s, %s, %s, %s)"""
         ]
         
@@ -347,6 +386,7 @@ def log_sensor_data(sensor_data):
             ('Sensor_Temp_Suelo_Z1', 1, current_time, sensor_data['soil_temperature']),
             ('Sensor_Hum_Suelo_Z1', 1, current_time, sensor_data['soil_moisture']),
             ('Sensor_PH_Suelo_Z1', 1, current_time, sensor_data['soil_ph'])
+            ('Sensor_Luz_Z1', 1, current_time, sensor_data['light_intensity'])
         ]
         
         # Execute all queries in a single transaction
@@ -666,6 +706,9 @@ def cleanup_hardware():
         # Add DHT cleanup
         if dht_device:
             dht_device.exit()
+        
+        if light_sensor:
+            light_sensor.close()
             
         # Add soil sensor cleanup
         if soil_sensor:
@@ -695,7 +738,7 @@ def setup_component(setup_func, component_name, max_retries=3):
 
 def main():
     global running, soil_sensor, db_connection, dht_device
-    global lamp_relay, fan_relay, humidifier_relay, irrigation_servo
+    global lamp_relay, fan_relay, humidifier_relay, irrigation_servo, light_sensor  # Add light_sensor
     
     try:
         print("Initializing components...")
@@ -727,7 +770,8 @@ def main():
         if not all(hw_results):
             raise Exception("Failed to initialize hardware devices")
             
-        dht_device, lamp_relay, fan_relay, humidifier_relay, irrigation_servo = hw_results
+        # Update this line to include light_sensor
+        dht_device, lamp_relay, fan_relay, humidifier_relay, irrigation_servo, light_sensor = hw_results
         
         print("All components initialized successfully")
         
