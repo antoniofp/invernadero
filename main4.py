@@ -115,7 +115,7 @@ def setup_hardware():
 
         # Initialize ADS1115 ADC
         i2c = busio.I2C(board.SCL, board.SDA)
-        ads = ADS.ADS1115(i2c)
+        ads = ADS.ADS1115(i2c, address=0x49)
         light_sensor = AnalogIn(ads, ADS.P0)
         
         # Initialize relays (active_high=False for active-low relay modules)
