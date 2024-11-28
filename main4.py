@@ -129,10 +129,10 @@ def setup_hardware():
         irrigation_servo.min()
         
         print("Hardware devices initialized successfully")
-        return (dht_device, lamp_relay, fan_relay, humidifier_relay, irrigation_servo)
+        return (dht_device, lamp_relay, fan_relay, humidifier_relay, irrigation_servo, light_sensor)
     except Exception as e:
         print(f"Error initializing hardware: {e}")
-        return (None, None, None, None, None)
+        return (None, None, None, None, None, None)
 
 db_lock = Lock()
 
@@ -391,7 +391,7 @@ def log_sensor_data(sensor_data):
             ('Sensor_Hum_Aire_Z1', 1, current_time, sensor_data['air_humidity']),
             ('Sensor_Temp_Suelo_Z1', 1, current_time, sensor_data['soil_temperature']),
             ('Sensor_Hum_Suelo_Z1', 1, current_time, sensor_data['soil_moisture']),
-            ('Sensor_PH_Suelo_Z1', 1, current_time, sensor_data['soil_ph'])
+            ('Sensor_PH_Suelo_Z1', 1, current_time, sensor_data['soil_ph']),
             ('Sensor_Luz_Z1', 1, current_time, sensor_data['light_intensity'])
         ]
         
